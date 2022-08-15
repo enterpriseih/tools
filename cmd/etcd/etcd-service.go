@@ -3,39 +3,36 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"gopkg.in/yaml.v3"
-	"log"
 	"os"
 	"strings"
 	"text/template"
 )
 
-type EtcdCluster struct {
-	Etcd []Etcd `yaml:"etcd"`
-}
-type Etcd struct {
-	Name string `yaml:"name"`
-	IP   string `yaml:"ip"`
-}
+func (k *K8SCluster) EtcdService() {
 
-func main() {
-	cluster := `
-etcd:
-  - name: etcd0
-    ip: 10.127.254.252
-  - name: etcd1
-    ip: 10.127.254.251
-  - name: etcd2
-    ip: 10.127.254.250
-`
-	etcdCluster := EtcdCluster{}
-
-	err := yaml.Unmarshal([]byte(cluster), &etcdCluster)
-	if err != nil {
-		log.Fatalf("error: %v", err)
+	for _, i := range k.Etcd {
+		ts, _ := template.New("etcd").Parse(fmt.Sprintf(etcdServiceTmpl(), k.etcdPeerUrl))
+		_ = ts.Execute(os.Stdout, i)
+		fmt.Println()
 	}
+}
+func (k *K8SCluster) etcdUrl() string {
+	var buf bytes.Buffer
+	t, _ := template.New("EtcdUrl").Parse(`{{ range .Etcd -}} https://{{ .IP }}:2379, {{- end }}`)
+	_ = t.Execute(&buf, k)
+	k.EtcdUrl = strings.TrimRight(buf.String(), ",")
+	return k.EtcdUrl
+}
 
-	str := `cat > /etc/systemd/system/etcd.service <<EOF
+func (k *K8SCluster) etcdPeerUrl() string {
+	var buf bytes.Buffer
+	t, _ := template.New("etcdPeerUrl").Parse(`{{ range .Etcd -}} {{ .Name}}=https://{{ .IP }}:2380, {{- end }}`)
+	_ = t.Execute(&buf, k)
+	return strings.TrimRight(buf.String(), ",")
+}
+
+func etcdServiceTmpl() string {
+	return `cat > /etc/systemd/system/etcd.service <<EOF
 [Unit]
 Description=etcd
 Documentation=https://github.com/coreos/etcd
@@ -60,16 +57,4 @@ ExecStart=/usr/local/bin/etcd --trusted-ca-file=/etc/kubernetes/pki/etcd/ca.crt 
 WantedBy=multi-user.target
 EOF
 `
-	var buf bytes.Buffer
-
-	t, _ := template.New("cluster").Parse(`{{ range .Etcd -}} {{ .Name}}=https://{{ .IP }}:2380, {{- end }}`)
-	_ = t.Execute(&buf, etcdCluster)
-	initialCluster := strings.TrimRight(buf.String(), ",")
-
-	for _, i := range etcdCluster.Etcd {
-		ts, _ := template.New("etcd").Parse(fmt.Sprintf(str, initialCluster))
-		_ = ts.Execute(os.Stdout, i)
-		fmt.Println()
-	}
-
 }
